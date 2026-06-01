@@ -33,7 +33,7 @@ If `npm run dev` shows an `ENOENT` error for `package.json`, you are probably in
 This repository deploys the Vite build from `dist` using GitHub Actions. In GitHub, open **Settings > Pages** and make sure **Source** is set to **GitHub Actions**, not a branch or `/docs` folder. The published URL is:
 
 ```text
-https://hbakk.github.io/ocp-IHwork/
+https://achrafbitar.github.io/OCPIHwork/
 ```
 
 ## Backend EMS Simulation Engine
