@@ -683,6 +683,7 @@
                         <path id="flowPvBess" class="flow-line" stroke="#f59e0b" marker-end="url(#arrowPv)" d="M150 138 C190 220, 205 265, 235 320"/>
                         <path id="flowInvLoad" class="flow-line" stroke="#16c6b7" marker-end="url(#arrowLoad)" d="M498 126 C590 112, 640 112, 735 126"/>
                         <path id="flowInvWheel" class="flow-line" stroke="#22c55e" marker-end="url(#arrowWheel)" d="M455 180 C465 242, 484 300, 520 356"/>
+                        <path id="flowBessWheel" class="flow-line" stroke="#818cf8" marker-end="url(#arrowBess)" d="M300 348 C360 392, 420 392, 488 366"/>
                         <path id="flowBessLoad" class="flow-line" stroke="#818cf8" marker-end="url(#arrowBess)" d="M300 337 C450 285, 580 222, 735 158"/>
                         <path id="flowGridLoad" class="flow-line" stroke="#ef4444" marker-end="url(#arrowGrid)" d="M750 333 C755 270, 758 220, 760 162"/>
                         <path id="flowGridBess" class="flow-line" stroke="#ef4444" marker-end="url(#arrowGrid)" d="M715 358 C565 382, 435 378, 300 348"/>
@@ -696,6 +697,7 @@
                     <div id="labelPvLoad" class="flow-label" style="left:58%;top:24%;color:#16c6b7;">0.00 MW</div>
                     <div id="labelPvBess" class="flow-label" style="left:20%;top:52%;color:#f59e0b;">0.00 MW</div>
                     <div id="labelWheel" class="flow-label" style="left:51%;top:68%;color:#22c55e;">0.00 MW</div>
+                    <div id="labelBessWheel" class="flow-label" style="left:34%;top:80%;color:#818cf8;">0.00 MW</div>
                     <div id="labelBessLoad" class="flow-label" style="left:47%;top:52%;color:#818cf8;">0.00 MW</div>
                     <div id="labelGridLoad" class="flow-label" style="right:8%;top:52%;color:#ef4444;">0.00 MW</div>
                     <div id="labelGridBess" class="flow-label" style="left:58%;top:78%;color:#ef4444;">0.00 MW</div>
@@ -1227,7 +1229,8 @@ function renderHour(h) {
   txt('nodeWheeling',  `${fmt(s.wheelingMW,2)} MW`);
   txt('labelPvLoad',   `${fmt(s.pvToLoadMW,2)} MW`);
   txt('labelPvBess',   `${fmt(s.pvToBessMW,2)} MW`);
-  txt('labelWheel',    `${fmt(s.wheelingMW,2)} MW`);
+  txt('labelWheel',    `PV→ ${fmt(s.pvToWheelingMW||0,2)} MW`);
+  txt('labelBessWheel',`BESS→ ${fmt(s.bessToWheelMW||0,2)} MW`);
   txt('labelBessLoad', `${fmt(s.bessToLoadMW,2)} MW`);
   txt('labelGridLoad', `${fmt(s.gridToLoadMW,2)} MW`);
   txt('labelGridBess', `${fmt(s.gridToBessMW,2)} MW`);
@@ -1238,7 +1241,8 @@ function renderHour(h) {
   flow('flowPvInv',   s.pvMW);
   flow('flowInvLoad', s.pvToLoadMW);
   flow('flowPvBess',  s.pvToBessMW);
-  flow('flowInvWheel',s.wheelingMW);
+  flow('flowInvWheel', s.pvToWheelingMW || 0);
+  flow('flowBessWheel',s.bessToWheelMW || 0);
   flow('flowBessLoad',s.bessToLoadMW);
   flow('flowGridLoad',s.gridToLoadMW);
   flow('flowGridBess',s.gridToBessMW);
