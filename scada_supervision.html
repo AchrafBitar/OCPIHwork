@@ -783,10 +783,10 @@
                             <div class="chart-title">Tariff Period Timeline</div>
                             <div class="tariff-timeline">
                                 <div class="tariff-bar">
-                                    <div class="tariff-segment creuses">Creuses<br>23-07</div>
-                                    <div class="tariff-segment pleines">Pleines<br>07-17</div>
-                                    <div class="tariff-segment pointe">Pointe<br>17-23</div>
-                                    <div class="tariff-segment creuses">23-24</div>
+                                    <div class="tariff-segment creuses">Creuses<br>22/23-07</div>
+                                    <div class="tariff-segment pleines">Pleines<br>07-17/18</div>
+                                    <div class="tariff-segment pointe">Pointe<br>17/18-22/23</div>
+                                    <div class="tariff-segment creuses">22/23</div>
                                 </div>
                                 <div id="timelineCursor" class="timeline-cursor" style="--cursor: 0%;"></div>
                             </div>
@@ -844,9 +844,9 @@
                         <div class="command-box" style="color:#c7d6e6;font-size:11px;">
                             <div id="weatherSummary" style="margin-bottom:4px;">Cliquez sur Fetch pour charger la météo</div>
                             <div id="sunSummary" style="color:#8ca4bb;margin-bottom:6px;"></div>
-                            <button id="fetchWeatherButton" class="scada-button primary" type="button" style="width:100%;margin-bottom:6px;">🌤 Fetch 7-day weather forecast</button>
+                            <button id="fetchWeatherButton" class="scada-button primary" type="button" style="width:100%;margin-bottom:6px;">🌤 Charger météo 2025 Benguerir</button>
                             <div id="weatherForecastTable" style="display:none;">
-                                <div style="color:#b9cbe0;font-size:10px;font-weight:900;letter-spacing:0.06em;margin-bottom:4px;">7-DAY PV PREDICTION — Benguerir 32.23°N 7.95°W</div>
+                                <div style="color:#b9cbe0;font-size:10px;font-weight:900;letter-spacing:0.06em;margin-bottom:4px;">PRÉVISION PV 7 JOURS — Benguerir 2025 (historique) 32.23°N 7.95°W</div>
                                 <table style="width:100%;border-collapse:collapse;font-size:10px;" id="forecastTableBody">
                                     <thead><tr style="color:#8ca4bb;">
                                         <th style="text-align:left;padding:2px 4px;">Date</th>
@@ -881,30 +881,49 @@
 // Fonctionne immédiatement (profil demo) + Excel réel 2025
 // ============================================================
 
-// --- CONSTANTES ---
-const BESS_MAX_MW        = 25;
-const BESS_CAPACITY_MWH  = 125;
+// --- CONSTANTES (stratégie EMS_FINAL_v5) ---
+const BESS_MAX_MW        = 25;     // P_BESS puissance max
+const BESS_CAPACITY_MWH  = 125;    // capacité BESS
 const SOC_MIN            = 0;
 const SOC_MAX            = 100;
-const LOAD_MW            = 15;
-const WHEELING_RATE      = 0.7131; // DH/kWh
+const LOAD_MW            = 15;     // P_Mine OCP Benguerir (constant)
 
-const TARIFF_SCHEDULE = [
-  [0,  7,  "Creuses", 0.5264],
-  [7,  17, "Pleines", 0.9017],
-  [17, 23, "Pointe",  1.2019],
-  [23, 24, "Creuses", 0.5264],
-];
+// Coûts internes (DH/kWh)
+const COST_PV            = 0.40;   // coût production PV
+const COST_BESS_WEAR     = 0.50;   // usure cyclique BESS
+const COST_WHEEL_TRANS   = 0.20;   // transport ONEE -> Jorf Lasfar / Safi
+const COST_PV_STORED     = COST_PV + COST_BESS_WEAR;        // 0.90  (PV -> BESS -> usage)
+const COST_PV_WHEEL      = COST_PV + COST_WHEEL_TRANS;      // 0.60  (PV surplus -> wheeling)
+const COST_BESS_WHEEL    = COST_PV_STORED + COST_WHEEL_TRANS; // 1.10 (BESS -> wheeling pointe)
 
-function getTariff(h) {
-  for (const [s, e, name, rate] of TARIFF_SCHEDULE)
-    if (h >= s && h < e) return { name, rate };
-  return { name: "Creuses", rate: 0.5264 };
+// Tarifs ONEE officiels (DH/kWh, TVA 20% incluse)
+const TARIFF_POINTE      = 1.3645;
+const TARIFF_PLEINES     = 0.9736;
+const TARIFF_CREUSES     = 0.7131;
+
+// Cibles / seuils SoC
+const SOC_TARGET_SUMMER  = 80;     // cible avant pointe (été)
+const SOC_TARGET_WINTER  = 90;     // cible avant pointe (hiver)
+const SOC_WHEEL_MIN      = 30;     // SoC mini pour wheeling simultané pointe
+const WHEEL_MAX_MW       = 10;     // capacité libre pointe = 25 - 15
+
+// Été ONEE : 1 juin -> 30 septembre (mois JS 5..8)
+function isSummer(month) { return month >= 5 && month <= 8; }
+function socTarget(month) { return isSummer(month) ? SOC_TARGET_SUMMER : SOC_TARGET_WINTER; }
+
+// Découpage horaire saisonnier (hiver 17-22 / été 18-23 pour la pointe)
+function getTariff(h, month) {
+  const summer    = isSummer(month);
+  const peakStart = summer ? 18 : 17;
+  const peakEnd   = summer ? 23 : 22;
+  const fullEnd   = summer ? 18 : 17;   // heures pleines 07h -> fullEnd
+  if (h >= peakStart && h < peakEnd) return { name: "Pointe",  rate: TARIFF_POINTE  };
+  if (h >= 7 && h < fullEnd)         return { name: "Pleines", rate: TARIFF_PLEINES };
+  return { name: "Creuses", rate: TARIFF_CREUSES };
 }
-function getMode(h) {
-  if (h >= 7  && h < 17) return "A";
-  if (h >= 17 && h < 23) return "B";
-  return "C";
+function getMode(h, month) {
+  const t = getTariff(h, month).name;
+  return t === "Pleines" ? "A" : t === "Pointe" ? "B" : "C";   // A=pleines B=pointe C=creuses
 }
 
 // --- PROFIL PV DEMO (24h typique Benguerir, MWh/h) ---
@@ -942,74 +961,118 @@ function fmtLocalTs(d) {
   return `${Y}-${M}-${D} ${hh}:${mm}`;
 }
 
-// --- SIMULATION EMS ---
+// --- SIMULATION EMS (stratégie EMS_FINAL_v5) ---
+// Précalcule, pour chaque jour, si la prévision PV J+1 est SUFFISANTE pour
+// recharger le BESS. Source : météo 2025 Benguerir (window._weather2025Suff,
+// indexée par jour de l'année) si chargée, sinon le surplus PV réel du jour
+// suivant dans les données chargées (production 2025 réalisée).
+function buildSufficiency(records) {
+  const nDays = Math.ceil(records.length / 24) || 1;
+  const surplus = new Array(nDays).fill(0);
+  const doy = new Array(nDays).fill(0);
+  for (let i = 0; i < records.length; i++) {
+    const d = Math.floor(i / 24);
+    surplus[d] += Math.max(0, (records[i].pvMWh || 0) - LOAD_MW);
+    if (i % 24 === 0) {
+      const ts = records[i].timestamp;
+      doy[d] = Math.floor((ts - new Date(ts.getFullYear(), 0, 0)) / 86400000); // 1..365
+    }
+  }
+  const wSuff = (typeof window !== 'undefined' && Array.isArray(window._weather2025Suff))
+    ? window._weather2025Suff : null;
+  // Suffisant si le surplus PV peut recharger le BESS à ~80% (100 MWh)
+  const PV_SURPLUS_THRESHOLD = BESS_CAPACITY_MWH * 0.8;
+  return function sufficient(d) {
+    d = Math.max(0, Math.min(nDays - 1, d));
+    if (wSuff) { const v = wSuff[doy[d] - 1]; if (v !== undefined && v !== null) return !!v; }
+    return surplus[d] >= PV_SURPLUS_THRESHOLD;
+  };
+}
+
 function simulateEms(records, nightCharge) {
   const states = [];
   let soc = 50;
   let cumGain = 0, cumCost = 0, cumBase = 0;
+  const sufficient = buildSufficiency(records);
 
   for (let i = 0; i < records.length; i++) {
     const rec   = records[i];
     const hod   = rec.timestamp.getHours();
-    const day   = Math.floor(i / 24) + 1;
-    const pv    = rec.pvMWh;
+    const month = rec.timestamp.getMonth();
+    const dIdx  = Math.floor(i / 24);
+    const day   = dIdx + 1;
+    const pv    = rec.pvMWh || 0;
     const load  = rec.loadMWh || LOAD_MW;
-    const tariff = getTariff(hod);
-    const mode   = getMode(hod);
+    const tariff = getTariff(hod, month);
+    const mode   = getMode(hod, month);
+    const tgt    = socTarget(month);
+    const nextSuff = sufficient(dIdx + 1);   // prévision PV J+1
 
+    const socStart = soc;
     const maxChg = Math.min(BESS_MAX_MW, ((SOC_MAX - soc) / 100) * BESS_CAPACITY_MWH);
     const maxDis = Math.min(BESS_MAX_MW, ((soc - SOC_MIN) / 100) * BESS_CAPACITY_MWH);
 
     let pvLoad=0, pvBess=0, pvWheel=0;
-    let bessLoad=0, gridLoad=0, gridBess=0;
-    let bessChg=0, bessDis=0;
-    let cmd = "GRID_TO_LOAD";
+    let bessLoad=0, bessWheel=0, gridLoad=0, gridBess=0;
+    let cmd = "VEILLE";
 
-    if (mode === "A") {
-      pvLoad  = Math.min(pv, load);
-      const sur = pv - pvLoad;
-      if (sur > 0.001) {
-        pvBess  = Math.min(sur, maxChg);
-        pvWheel = Math.max(0, sur - pvBess);
+    if (mode === "A") {                       // ☀️ HEURES PLEINES
+      pvLoad = Math.min(pv, load);            // PV -> OCP direct (priorité absolue)
+      if (pv >= load) {                       // surplus PV
+        const sur = pv - load;
+        pvBess  = Math.min(sur, maxChg);       // charger BESS (priorité 1)
+        pvWheel = Math.max(0, sur - pvBess);   // BESS plein -> wheeling Jorf/Safi (0.60)
+        cmd = pvBess > 0.01 ? "PV_CHARGE_BESS" : (pvWheel > 0.01 ? "PV_WHEELING" : "PV_TO_OCP");
+      } else {                                // déficit PV
+        const deficit = load - pvLoad;
+        bessLoad = Math.min(deficit, maxDis);  // BESS comble le déficit
+        gridLoad = Math.max(0, deficit - bessLoad); // ultime recours : réseau pleines
+        cmd = bessLoad > 0.01 ? "BESS_COVER_DEFICIT" : "GRID_TO_OCP";
       }
-      gridLoad = Math.max(0, load - pvLoad);
-      bessChg  = pvBess;
-      if (pvBess > 0.001)   cmd = "PV_CHARGE_BESS";
-      else if (pvWheel > 0) cmd = "PV_TO_WHEELING";
-      else if (gridLoad > 0) cmd = "PV_GRID_TO_LOAD";
-      else cmd = "PV_TO_LOAD";
 
-    } else if (mode === "B") {
-      pvLoad  = Math.min(pv, load);
+    } else if (mode === "B") {                // ⚡ HEURES DE POINTE — décharge simultanée
+      pvLoad = Math.min(pv, load);
       const rem = load - pvLoad;
-      bessLoad = Math.min(rem, maxDis);
-      gridLoad = Math.max(0, rem - bessLoad);
-      const sur = pv - pvLoad;
-      if (sur > 0.001) pvWheel = sur;
-      bessDis = bessLoad;
-      cmd = bessLoad > 0.001 ? "BESS_DISCHARGE_PEAK" : "PV_GRID_TO_LOAD";
+      bessLoad = Math.min(rem, maxDis);        // ① 15 MW -> OCP (priorité absolue)
+      gridLoad = Math.max(0, rem - bessLoad);  // complément réseau si SoC bas
+      const pvSur = Math.max(0, pv - pvLoad);
+      // ② wheeling simultané (jusqu'à 10 MW libres) si PV J+1 suffisant ET SoC>30%
+      const freeDis = Math.max(0, Math.min(WHEEL_MAX_MW, maxDis - bessLoad));
+      if (freeDis > 0.01 && nextSuff && socStart > SOC_WHEEL_MIN) bessWheel = freeDis;
+      pvWheel = pvSur;                         // surplus PV éventuel -> wheeling
+      cmd = bessWheel > 0.01 ? "BESS_OCP+WHEELING" : (bessLoad > 0.01 ? "BESS_DISCHARGE_PEAK" : "GRID_PEAK");
 
-    } else { // Mode C — nuit
-      gridLoad = load;
-      if (nightCharge && tariff.name === "Creuses" && maxChg > 0.5) {
-        gridBess = Math.min(BESS_MAX_MW * 0.5, maxChg);
-        bessChg  = gridBess;
+    } else {                                  // 🌙 HEURES CREUSES
+      gridLoad = load;                         // réseau -> OCP 15 MW
+      cmd = "GRID_TO_OCP_NIGHT";
+      // charge réseau UNIQUEMENT si PV J+1 faible ET SoC < cible (jamais en pointe/pleines)
+      if (nightCharge && !nextSuff && socStart < tgt && maxChg > 0.01) {
+        gridBess = Math.min(BESS_MAX_MW, maxChg);
         cmd = "GRID_CHARGE_BESS_NIGHT";
       }
     }
 
-    const socStart = soc;
+    const bessChg = pvBess + gridBess;
+    const bessDis = bessLoad + bessWheel;
     soc = Math.max(SOC_MIN, Math.min(SOC_MAX,
       soc + ((bessChg - bessDis) / BESS_CAPACITY_MWH) * 100));
     const socEnd = soc;
 
-    const gridTotal = gridLoad + gridBess;
-    const wheelRev  = pvWheel * 1000 * WHEELING_RATE;
-    const cost      = gridTotal * 1000 * tariff.rate - wheelRev;
-    const base      = load * 1000 * tariff.rate;
-    const gain      = base - cost;
-    cumGain += gain; cumCost += cost; cumBase += base;
+    const wheeling = pvWheel + bessWheel;
 
+    // --- Coûts (DH) — modèle EMS_FINAL_v5 ---
+    const emsCost =
+        pvLoad   * COST_PV        * 1000           // PV direct -> OCP (0.40)
+      + bessLoad * COST_PV_STORED * 1000           // BESS -> OCP (0.90, PV stocké)
+      + gridLoad * tariff.rate    * 1000           // réseau -> OCP au tarif période
+      + gridBess * (tariff.rate + COST_BESS_WEAR) * 1000   // charge réseau creuses (1.2131)
+      - pvWheel   * (tariff.rate   - COST_PV_WHEEL)   * 1000 // gain net wheeling PV (tarif évité - 0.60)
+      - bessWheel * (TARIFF_POINTE - COST_BESS_WHEEL) * 1000; // gain net wheeling BESS (1.3645 - 1.10)
+    const base = load * tariff.rate * 1000;        // référence : 100% réseau au tarif
+    const gain = base - emsCost;
+    cumGain += gain; cumCost += emsCost; cumBase += base;
+
+    const gridTotal = gridLoad + gridBess;
     const bessPow   = bessChg - bessDis;
     const balErr    = Math.abs((pvLoad + bessLoad + gridLoad) - load);
 
@@ -1024,7 +1087,8 @@ function simulateEms(records, nightCharge) {
       pvToLoadMW: pvLoad, pvToLoadMWh: pvLoad,
       pvToBessMW: pvBess, pvToBessMWh: pvBess,
       pvToWheelingMW: pvWheel,
-      wheelingMW: pvWheel, wheelingMWh: pvWheel,
+      bessToWheelMW: bessWheel, bessToWheelMWh: bessWheel,
+      wheelingMW: wheeling, wheelingMWh: wheeling,
       bessToLoadMW: bessLoad, bessDischargeMWh: bessDis,
       bessChargeMWh: bessChg,
       gridToLoadMW: gridLoad, gridToLoadMWh: gridLoad,
@@ -1034,8 +1098,9 @@ function simulateEms(records, nightCharge) {
       socPercent: socEnd, socStartPercent: socStart, socEndPercent: socEnd,
       socMWh: (socEnd / 100) * BESS_CAPACITY_MWH,
       tariff: tariff.name, tariffDhPerKWh: tariff.rate,
+      forecastNextDay: nextSuff ? "SUFFISANTE" : "FAIBLE",
       emsMode: mode, supportMode: null, command: cmd,
-      costDh: cost, baselineCostDh: base, netCostDhPerHour: cost,
+      costDh: emsCost, baselineCostDh: base, netCostDhPerHour: emsCost,
       cumulativeGainDh: cumGain,
       cumulativeEmsCostDh: cumCost,
       cumulativeBaselineCostDh: cumBase,
@@ -1059,9 +1124,19 @@ let visibleLog    = [];
 let lastLogged    = null;
 let activeCharts  = [];
 let chartWinStart = 0;
+let emsRecords    = generateDemoYear();   // jeu de données courant (démo ou Excel)
 
 // Init demo immediately
-hourStates = simulateEms(generateDemoYear(), false);
+hourStates = simulateEms(emsRecords, false);
+
+// Re-simule avec les données + la météo 2025 courantes, puis rafraîchit l'affichage
+function rerunEms() {
+  hourStates = simulateEms(emsRecords, nightCharge);
+  if (currentHour >= hourStates.length) currentHour = 0;
+  if (typeof renderCharts === 'function') renderCharts();
+  if (typeof renderHour   === 'function') renderHour(currentHour);
+  if (typeof renderKpis   === 'function') renderKpis();
+}
 
 // --- UI UTILS ---
 const el  = id => document.getElementById(id);
@@ -1108,6 +1183,7 @@ async function loadExcel(file) {
 
     txt('excelStatus', `Simulation EMS en cours (${records.length} h)...`);
     nightCharge = el('allowNightGridCharging')?.checked || false;
+    emsRecords  = records;
     hourStates  = simulateEms(records, nightCharge);
     excelLoaded = true;
 
@@ -1401,7 +1477,7 @@ function renderCharts() {
 
   mk('loadSupplyChart',   [ds('PV→Load',V(s=>s.pvToLoadMW),'#f59e0b','ls'),ds('BESS→Load',V(s=>s.bessToLoadMW),'#818cf8','ls'),ds('Grid→Load',V(s=>s.gridToLoadMW),'#ef4444','ls')], 'MW', true);
   mk('bessChargeChart',   [ds('Charge',V(s=>Math.max(0,s.bessPowerMW)),'#22c55e'),ds('Décharge',V(s=>Math.min(0,s.bessPowerMW)),'#ef4444')], 'MW');
-  mk('pvAllocationChart', [ds('PV→Load',V(s=>s.pvToLoadMW),'#f59e0b','pv'),ds('PV→BESS',V(s=>s.pvToBessMW),'#818cf8','pv'),ds('Wheeling',V(s=>s.wheelingMW),'#22c55e','pv')], 'MW', true);
+  mk('pvAllocationChart', [ds('PV→Load',V(s=>s.pvToLoadMW),'#f59e0b','pv'),ds('PV→BESS',V(s=>s.pvToBessMW),'#818cf8','pv'),ds('PV→Wheeling',V(s=>s.pvToWheelingMW),'#22c55e','pv')], 'MW', true);
   mk('gridBreakdownChart',[ds('Grid→Load',V(s=>s.gridToLoadMW),'#ef4444'),ds('Grid→BESS',V(s=>s.gridToBessMW),'#f59e0b'),ds('Total',V(s=>s.gridImportMW),'#e5e7eb')], 'MW');
   mk('socChart',          [ds('SoC %',V(s=>s.socPercent),'#8b5cf6')], '%');
   mk('economicChart',     [ds('Baseline',V(s=>s.cumulativeBaselineCostDh),'#94a3b8'),ds('EMS',V(s=>s.cumulativeEmsCostDh),'#f59e0b'),ds('Gain cumulé',V(s=>s.cumulativeGainDh),'#22c55e')], 'DH');
@@ -1436,7 +1512,7 @@ function updateBadges() {
   const s = hourStates[currentHour]; if (!s) return;
   txt('supplyMixLatest',    `PV ${fmt(s.pvToLoadMW,1)} | BESS ${fmt(s.bessToLoadMW,1)} | Grid ${fmt(s.gridToLoadMW,1)} MW`);
   txt('bessPowerLatest',    `${s.bessPowerMW>=0?'Charge':'Décharge'} ${sgn(s.bessPowerMW,1)} MW`);
-  txt('pvAllocationLatest', `Load ${fmt(s.pvToLoadMW,1)} | BESS ${fmt(s.pvToBessMW,1)} | Wheel ${fmt(s.wheelingMW,1)} MW`);
+  txt('pvAllocationLatest', `Load ${fmt(s.pvToLoadMW,1)} | BESS ${fmt(s.pvToBessMW,1)} | Wheel ${fmt(s.pvToWheelingMW,1)} MW`);
   txt('gridBreakdownLatest',`Load ${fmt(s.gridToLoadMW,1)} | BESS ${fmt(s.gridToBessMW,1)} | Total ${fmt(s.gridImportMW,1)} MW`);
   txt('socLatest',          `${fmt(s.socPercent,1)}%`);
   txt('economicLatest',     `Gain ${fmt(s.cumulativeGainDh,0)} DH`);
@@ -1558,85 +1634,84 @@ function buildHourlyProfile(dailyMWh, normShape, month) {
   return raw.map(v => total > 0 ? +(v / total * dailyMWh).toFixed(3) : 0);
 }
 
-// ── STEP 4: fetch Open-Meteo + run prediction ─────────────────────────────
+// Seuil de rayonnement (MJ/m²/jour) : PV suffisant pour recharger le BESS
+const RAD_SUFFICIENT = 18;
+
+// ── STEP 4: météo HISTORIQUE 2025 Benguerir (archive Open-Meteo) + décision ─
 async function fetchWeatherAndPredict() {
   const btn = el('fetchWeatherButton');
-  if (btn) { btn.textContent = '⏳ Fetching...'; btn.disabled = true; }
-  txt('weatherSummary', 'Connexion Open-Meteo...');
+  if (btn) { btn.textContent = '⏳ Chargement...'; btn.disabled = true; }
+  txt('weatherSummary', 'Connexion Open-Meteo (archive 2025)...');
 
-  // Calibrate from last 24h simulated data
+  // Calibration PR à partir des dernières 24h simulées (pour l'estimation PV affichée)
   const stats      = getLast24hStats();
   const calibPR    = stats ? stats.effectivePR : PV_PR;
-  const normShape  = stats ? stats.normShape   : null;
   const hasRealData= stats && stats.totalPvMWh > 1;
 
   try {
-    const url = `https://api.open-meteo.com/v1/forecast`
+    // Année complète 2025 — archive météo réelle Benguerir
+    const url = `https://archive-api.open-meteo.com/v1/archive`
       + `?latitude=${BENGUERIR_LAT}&longitude=${BENGUERIR_LON}`
+      + `&start_date=2025-01-01&end_date=2025-12-31`
       + `&daily=shortwave_radiation_sum,cloud_cover_mean,temperature_2m_max,sunrise,sunset`
-      + `&forecast_days=7&timezone=Africa%2FCasablanca`;
+      + `&timezone=Africa%2FCasablanca`;
 
     const res  = await fetch(url);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const d    = data.daily;
+    const rad  = d.shortwave_radiation_sum;
 
-    // Add confidence column to header if not there
+    // Décision pour TOUTE l'année 2025 : PV J suffisant pour recharger le BESS ?
+    // Indexé par jour de l'année (0 = 1er janvier) → utilisé par simulateEms().
+    window._weather2025Suff = rad.map(r => (r || 0) >= RAD_SUFFICIENT);
+    const nSuff = window._weather2025Suff.filter(Boolean).length;
+
+    // Re-simule l'EMS avec la décision météo 2025 (charge/wheeling pilotés par J+1)
+    rerunEms();
+
+    // En-tête : colonne décision BESS
     const thead = document.querySelector('#forecastTableBody thead tr');
     if (thead && thead.children.length < 6)
-      thead.innerHTML += `<th style="padding:2px 4px;color:#22c55e;">Conf.</th>`;
+      thead.innerHTML += `<th style="padding:2px 4px;color:#22c55e;">🔋 BESS J+1</th>`;
 
+    // Affiche 7 jours à partir du jour simulé courant (par défaut 01/01/2025)
+    const startIdx = Math.min(Math.max(0, Math.floor(currentHour / 24)), Math.max(0, d.time.length - 7));
     const rows = [];
-    let totalPredMWh = 0;
-    const forecastProfiles = [];
-
-    for (let i = 0; i < d.time.length; i++) {
+    for (let i = startIdx; i < Math.min(startIdx + 7, d.time.length); i++) {
       const date    = d.time[i];
-      const rad     = d.shortwave_radiation_sum[i] || 0;
+      const r       = rad[i] || 0;
       const cloud   = d.cloud_cover_mean[i] || 0;
       const tmax    = d.temperature_2m_max[i] || 30;
-      const sunrise = (d.sunrise[i] || '').slice(11,16) || '--';
-      const sunset  = (d.sunset[i]  || '').slice(11,16) || '--';
-      const month   = new Date(date).getMonth();
-      // Use last-24h shape only for day 1 (most similar to recent conditions)
-      const pvMWh  = predictWithCalibration(rad, cloud, tmax, calibPR);
-      const hourly = buildHourlyProfile(pvMWh, i === 0 ? normShape : null, month);
-      totalPredMWh += pvMWh;
-      forecastProfiles.push({ date, pvMWh, hourly, sunrise, sunset, cloud, rad, tmax });
-
-      // Confidence decreases day by day
-      const conf       = Math.max(30, Math.round(96 - i * 9));
+      const pvMWh   = predictWithCalibration(r, cloud, tmax, calibPR);
+      const suff    = r >= RAD_SUFFICIENT;
       const cloudColor = cloud < 30 ? '#f59e0b' : cloud < 60 ? '#ffd166' : '#8ca4bb';
       const pvColor    = pvMWh > 300 ? '#22c55e' : pvMWh > 150 ? '#f59e0b' : '#94a3b8';
-      const confColor  = conf > 80 ? '#22c55e' : conf > 60 ? '#f59e0b' : '#8ca4bb';
       rows.push(`<tr style="border-bottom:1px solid #18283a;">
         <td style="padding:3px 4px;text-align:left;white-space:nowrap;">${date}</td>
         <td style="padding:3px 4px;text-align:center;color:${cloudColor};">${Math.round(cloud)}%</td>
-        <td style="padding:3px 4px;text-align:center;">${rad.toFixed(1)}</td>
+        <td style="padding:3px 4px;text-align:center;">${r.toFixed(1)}</td>
         <td style="padding:3px 4px;text-align:center;">${tmax.toFixed(1)}</td>
         <td style="padding:3px 4px;text-align:center;font-weight:900;color:${pvColor};">${pvMWh}</td>
-        <td style="padding:3px 4px;text-align:center;font-size:9px;color:${confColor};">${conf}%</td>
+        <td style="padding:3px 4px;text-align:center;font-size:9px;font-weight:900;color:${suff ? '#22c55e' : '#f59e0b'};">${suff ? 'SUFFISANTE' : 'FAIBLE'}</td>
       </tr>`);
     }
 
-    const today = forecastProfiles[0];
-    txt('weatherSummary', `☀ ${today.date} | Lever ${today.sunrise} Coucher ${today.sunset} | ☁ ${Math.round(today.cloud)}% | ${today.tmax.toFixed(1)}°C`);
-    txt('sunSummary', `7j total estimé: ${Math.round(totalPredMWh)} MWh | PR calibré: ${(calibPR*100).toFixed(1)}%`);
+    const first = d.time[startIdx], firstRad = (rad[startIdx]||0);
+    txt('weatherSummary', `☀ ${first} | Rad ${firstRad.toFixed(1)} MJ/m² | ☁ ${Math.round(d.cloud_cover_mean[startIdx]||0)}% | ${(d.temperature_2m_max[startIdx]||0).toFixed(1)}°C`);
+    txt('sunSummary', `Météo réelle 2025 Benguerir | ${nSuff}/${rad.length} jours « PV suffisant » (≥ ${RAD_SUFFICIENT} MJ/m²) → pilote charge BESS & wheeling`);
     htm('forecastRows', rows.join(''));
-    txt('forecastNote', hasRealData
-      ? `✓ Calibré sur ${stats.hoursUsed}h simulées — PV 24h réel: ${stats.totalPvMWh.toFixed(1)} MWh — PR effectif: ${(calibPR*100).toFixed(1)}%`
-      : `⚠ Simulation non lancée — PR théorique: ${(PV_PR*100).toFixed(0)}% (lancez la simulation d'abord pour calibrer)`);
+    txt('forecastNote', `Décision EMS : si PV J+1 SUFFISANTE → wheeling pointe autorisé (SoC>30%) ; si FAIBLE → recharge BESS la nuit (creuses). Seuil ${RAD_SUFFICIENT} MJ/m².`);
     el('weatherForecastTable').style.display = 'block';
-    badge('weatherStatus', 'MÉTÉO EN LIGNE', 'online');
-    window._forecastProfiles = forecastProfiles;
-    if (btn) { btn.textContent = '🔄 Refresh forecast'; btn.disabled = false; }
+    badge('weatherStatus', 'MÉTÉO 2025 EN LIGNE', 'online');
+    if (btn) { btn.textContent = '🔄 Rafraîchir météo 2025'; btn.disabled = false; }
 
   } catch (err) {
     console.error(err);
     txt('weatherSummary', `⚠ ${err.message}`);
     txt('sunSummary', 'Fonctionne uniquement en ligne (GitHub Pages / Live Server)');
     badge('weatherStatus', 'MÉTÉO OFFLINE', 'fault');
-    if (btn) { btn.textContent = '🌤 Retry forecast'; btn.disabled = false; }
+    if (btn) { btn.textContent = '🌤 Réessayer (en ligne)'; btn.disabled = false; }
   }
 }
 
@@ -1719,8 +1794,8 @@ document.addEventListener('DOMContentLoaded', () => {
   badge('pvgisStatus', 'DEMO MODE', 'warning');
   badge('weatherStatus','WEATHER PENDING','warning');
   txt('excelStatus', 'Upload your hourly production data file (.xlsx) to run the simulation');
-  txt('weatherSummary','Click "Fetch 7-day weather forecast" to load live Benguerir météo');
-  txt('sunSummary','Benguerir — 32.23°N 7.95°W | Prediction model ready');
+  txt('weatherSummary','Cliquez « Charger météo 2025 Benguerir » pour piloter la décision charge BESS');
+  txt('sunSummary','Benguerir — 32.23°N 7.95°W | Décision EMS basée sur la météo réelle 2025');
 
   renderHour(0);
   renderCharts();
