@@ -943,8 +943,9 @@ function generateDemoYear() {
     const d = new Date(base.getTime() + h * 3600000);
     const hod = d.getHours();
     const doy = Math.floor(h / 24);
-    // Seasonal factor: peak in summer (day 172), low in winter
-    const season = 0.6 + 0.4 * Math.sin((doy - 80) / 365 * 2 * Math.PI);
+    // Seasonal factor: summer peak, winter still produces a PV surplus
+    // (min ~0.6 so midday PV stays above the 15 MW load even in winter)
+    const season = 0.8 + 0.2 * Math.sin((doy - 80) / 365 * 2 * Math.PI);
     // Random daily variability ±15%
     const noise = 0.85 + 0.30 * Math.random();
     const pv = +(PV_DEMO_24H[hod] * season * noise).toFixed(3);
@@ -1038,9 +1039,10 @@ function simulateEms(records, nightCharge) {
       bessLoad = Math.min(rem, maxDis);        // ① 15 MW -> OCP (priorité absolue)
       gridLoad = Math.max(0, rem - bessLoad);  // complément réseau si SoC bas
       const pvSur = Math.max(0, pv - pvLoad);
-      // ② wheeling simultané (jusqu'à 10 MW libres) si PV J+1 suffisant ET SoC>30%
+      // ② wheeling simultané : la capacité libre (jusqu'à 10 MW) part vers Jorf/Safi
+      //    tant que le BESS a de la réserve (SoC > 30%). OCP reste prioritaire.
       const freeDis = Math.max(0, Math.min(WHEEL_MAX_MW, maxDis - bessLoad));
-      if (freeDis > 0.01 && nextSuff && socStart > SOC_WHEEL_MIN) bessWheel = freeDis;
+      if (freeDis > 0.01 && socStart > SOC_WHEEL_MIN) bessWheel = freeDis;
       pvWheel = pvSur;                         // surplus PV éventuel -> wheeling
       cmd = bessWheel > 0.01 ? "BESS_OCP+WHEELING" : (bessLoad > 0.01 ? "BESS_DISCHARGE_PEAK" : "GRID_PEAK");
 
